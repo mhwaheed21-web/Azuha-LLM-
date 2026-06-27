@@ -1,5 +1,6 @@
 import tiktoken
 import torch
+from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
 
 
@@ -40,7 +41,14 @@ def create_dataloader_v1(txt, batch_size, max_length, stride,
     return dataloader
 
 
-with open("the-verdict.txt", "r", encoding="utf-8") as f:
+
+
+# TESTING THE DATALOADER AND EMBEDDING LAYERS
+
+# Resolve the data file relative to this script so execution does not depend on cwd.
+data_file = Path(__file__).resolve().parent / "the-verdict.txt"
+
+with data_file.open("r", encoding="utf-8") as f:
     raw_text = f.read()
 
 vocab_size = 50257
@@ -59,3 +67,15 @@ dataloader = create_dataloader_v1(
     max_length=max_length,
     stride=max_length
 )
+
+
+for batch in dataloader:
+    x, y = batch
+
+    token_embeddings = token_embedding_layer(x)
+    pos_embeddings = pos_embedding_layer(torch.arange(4))
+    input_embeddings = token_embeddings + pos_embeddings
+
+    break
+
+print(input_embeddings.shape)
