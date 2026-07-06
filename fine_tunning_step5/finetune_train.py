@@ -59,7 +59,7 @@ MODEL_CONFIGS = {
     "gpt2-xl (1558M)":    {"emb_dim": 1600, "n_layers": 48, "n_heads": 25},
 }
 
-CHOOSE_MODEL = "gpt2-medium (355M)"
+CHOOSE_MODEL = "gpt2-small (124M)"
 
 
 # ─────────────────────────────────────────────
@@ -156,6 +156,18 @@ def train_model(model, train_loader, val_loader, optimizer,
         model.train()
 
         for input_batch, target_batch in train_loader:
+
+            # ===== Added checks =====
+            if global_step == -1:
+                print("Input batch device:", input_batch.device)
+                print("Target batch device:", target_batch.device)
+                print("Model device:", next(model.parameters()).device)
+                print("GPU memory allocated:",
+                      torch.cuda.memory_allocated()/1024**2, "MB")
+                print("GPU memory reserved:",
+                      torch.cuda.memory_reserved()/1024**2, "MB")
+            # ========================
+
             optimizer.zero_grad()
             loss = calc_loss_batch(input_batch, target_batch, model, device)
             loss.backward()
@@ -182,6 +194,43 @@ def train_model(model, train_loader, val_loader, optimizer,
     return train_losses, val_losses, tokens_seen
 
 
+# def train_model(model, train_loader, val_loader, optimizer,
+#                 device, num_epochs, eval_freq, eval_iter,
+#                 tokenizer, val_data):
+#     train_losses, val_losses, tokens_seen = [], [], []
+#     global_step = -1
+#     total_tokens = 0
+
+#     for epoch in range(num_epochs):
+#         model.train()
+
+#         for input_batch, target_batch in train_loader:
+#             optimizer.zero_grad()
+#             loss = calc_loss_batch(input_batch, target_batch, model, device)
+#             loss.backward()
+#             optimizer.step()
+
+#             total_tokens += input_batch.numel()
+#             global_step  += 1
+
+#             if global_step % eval_freq == 0:
+#                 train_loss, val_loss = evaluate_model(
+#                     model, train_loader, val_loader, device, eval_iter
+#                 )
+#                 train_losses.append(train_loss)
+#                 val_losses.append(val_loss)
+#                 tokens_seen.append(total_tokens)
+#                 print(
+#                     f"Ep {epoch+1} (Step {global_step:06d}): "
+#                     f"Train loss {train_loss:.3f}, Val loss {val_loss:.3f}"
+#                 )
+
+#         # print a sample response after every epoch
+#         generate_and_print_sample(model, tokenizer, device, val_data)
+
+#     return train_losses, val_losses, tokens_seen
+
+
 # ─────────────────────────────────────────────
 # PLOT LOSSES
 # ─────────────────────────────────────────────
@@ -206,11 +255,22 @@ def plot_losses(epochs_seen, tokens_seen, train_losses, val_losses,
 # MAIN — run this file to start fine-tuning
 # ─────────────────────────────────────────────
 
+
+
+
 if __name__ == "__main__":
 
     # ── device ──
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
+
+    print("CUDA available:", torch.cuda.is_available())
+    print("Current device:", torch.cuda.current_device())
+    print("GPU:", torch.cuda.get_device_name(0))
+    print("Memory allocated:",
+        torch.cuda.memory_allocated()/1024**2, "MB")
+    print("Memory reserved:",
+        torch.cuda.memory_reserved()/1024**2, "MB")
 
     # ── tokenizer ──
     tokenizer = tiktoken.get_encoding("gpt2")
@@ -230,7 +290,6 @@ if __name__ == "__main__":
     model_size = CHOOSE_MODEL.split(" ")[-1].lstrip("(").rstrip(")")
 
     # ── load pretrained GPT-2 weights ──
-    # NOTE: downloads ~1.42 GB on first run
     print(f"\nLoading pretrained weights: {CHOOSE_MODEL}")
     settings, params = download_and_load_gpt2(
         model_size=model_size,
@@ -239,11 +298,18 @@ if __name__ == "__main__":
     model = GPTModel(cfg)
     load_weights_into_gpt(model, params)
     model.to(device)
+
+    # ===== Added checks =====
+    print("Model device:", next(model.parameters()).device)
+    print("Memory allocated after model.to(device):",
+          torch.cuda.memory_allocated()/1024**2, "MB")
+    print("Memory reserved after model.to(device):",
+          torch.cuda.memory_reserved()/1024**2, "MB")
+    # ========================
+
     print("Pretrained weights loaded successfully.")
 
     # ── optimizer ──
-    # learning rate 5e-5 and weight_decay 0.1 are the values
-    # used in Chapter 7 of the book — verify from your PDF
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=5e-5,
@@ -251,13 +317,9 @@ if __name__ == "__main__":
     )
 
     # ── training settings ──
-    # NOTE: 2 epochs is a starting point for Alpaca's 52k entries.
-    # The book uses similar settings on 1,100 entries. With 52k entries
-    # even 1 epoch is significant. Adjust based on your GPU and time.
-    # I am not certain of the ideal epoch count — monitor val_loss.
     NUM_EPOCHS = 2
-    EVAL_FREQ  = 200   # evaluate every 200 steps
-    EVAL_ITER  = 5     # use 5 batches for each eval estimate
+    EVAL_FREQ  = 200
+    EVAL_ITER  = 5
 
     # ── train ──
     print("\nStarting fine-tuning...")
@@ -275,7 +337,6 @@ if __name__ == "__main__":
     )
 
     # ── save model ──
-    # exact filename the book uses (confirmed from PDF)
     save_path = "gpt2-medium355M-sft.pth"
     torch.save(model.state_dict(), save_path)
     print(f"\nFine-tuned model saved to {save_path}")
@@ -283,3 +344,99 @@ if __name__ == "__main__":
     # ── plot ──
     epochs_tensor = torch.linspace(0, NUM_EPOCHS, len(train_losses))
     plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+
+
+
+
+
+
+
+
+
+
+# if __name__ == "__main__":
+
+#     # ── device ──
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     print(f"Device: {device}")
+    
+
+#     print("CUDA available:", torch.cuda.is_available())
+#     print("Current device:", torch.cuda.current_device())
+#     print("GPU:", torch.cuda.get_device_name(0))
+#     print("Memory allocated:",
+#         torch.cuda.memory_allocated()/1024**2, "MB")
+#     print("Memory reserved:",
+#         torch.cuda.memory_reserved()/1024**2, "MB")
+
+#     # ── tokenizer ──
+#     tokenizer = tiktoken.get_encoding("gpt2")
+
+#     # ── data ──
+#     data = load_alpaca_data()
+#     train_data, val_data, test_data = split_data(data)
+#     train_loader, val_loader, test_loader = create_dataloaders(
+#         train_data, val_data, test_data,
+#         tokenizer=tokenizer,
+#         device=device,
+#         batch_size=8    # reduce to 4 if you run out of GPU memory
+#     )
+
+#     # ── model config ──
+#     cfg = {**BASE_CONFIG, **MODEL_CONFIGS[CHOOSE_MODEL]}
+#     model_size = CHOOSE_MODEL.split(" ")[-1].lstrip("(").rstrip(")")
+
+#     # ── load pretrained GPT-2 weights ──
+#     # NOTE: downloads ~1.42 GB on first run
+#     print(f"\nLoading pretrained weights: {CHOOSE_MODEL}")
+#     settings, params = download_and_load_gpt2(
+#         model_size=model_size,
+#         models_dir="/home/hamza/WORK-linux/LLM/pretraining_step4/gpt2"
+#     )
+#     model = GPTModel(cfg)
+#     load_weights_into_gpt(model, params)
+#     model.to(device)
+#     print("Pretrained weights loaded successfully.")
+
+#     # ── optimizer ──
+#     # learning rate 5e-5 and weight_decay 0.1 are the values
+#     # used in Chapter 7 of the book — verify from your PDF
+#     optimizer = torch.optim.AdamW(
+#         model.parameters(),
+#         lr=5e-5,
+#         weight_decay=0.1
+#     )
+
+#     # ── training settings ──
+#     # NOTE: 2 epochs is a starting point for Alpaca's 52k entries.
+#     # The book uses similar settings on 1,100 entries. With 52k entries
+#     # even 1 epoch is significant. Adjust based on your GPU and time.
+#     # I am not certain of the ideal epoch count — monitor val_loss.
+#     NUM_EPOCHS = 2
+#     EVAL_FREQ  = 200   # evaluate every 200 steps
+#     EVAL_ITER  = 5     # use 5 batches for each eval estimate
+
+#     # ── train ──
+#     print("\nStarting fine-tuning...")
+#     train_losses, val_losses, tokens_seen = train_model(
+#         model=model,
+#         train_loader=train_loader,
+#         val_loader=val_loader,
+#         optimizer=optimizer,
+#         device=device,
+#         num_epochs=NUM_EPOCHS,
+#         eval_freq=EVAL_FREQ,
+#         eval_iter=EVAL_ITER,
+#         tokenizer=tokenizer,
+#         val_data=val_data
+#     )
+
+#     # ── save model ──
+#     # exact filename the book uses (confirmed from PDF)
+#     save_path = "gpt2-medium355M-sft.pth"
+#     torch.save(model.state_dict(), save_path)
+#     print(f"\nFine-tuned model saved to {save_path}")
+
+#     # ── plot ──
+#     epochs_tensor = torch.linspace(0, NUM_EPOCHS, len(train_losses))
+#     plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
