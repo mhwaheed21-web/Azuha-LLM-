@@ -1,2 +1,4 @@
 *pretraining_step4/gpt2/
 *pretraining_step4/ch5.ipynb
+__pycache__/
+*.pyc

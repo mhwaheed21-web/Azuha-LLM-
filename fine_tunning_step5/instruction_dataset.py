@@ -17,6 +17,7 @@
 #       Verify this matches your intended use before proceeding.
 
 import torch
+import json
 import tiktoken
 from torch.utils.data import Dataset, DataLoader
 from functools import partial
@@ -41,6 +42,33 @@ def load_alpaca_data():
     return data
 
 
+
+# def load_custom_data(file_path):
+#     """
+#     Loads your personal JSON entries.
+#     File must be a list of dicts with keys:
+#     instruction, input, output
+#     """
+#     with open(file_path, "r", encoding="utf-8") as f:
+#         custom_data = json.load(f)
+#     print(f"Loaded {len(custom_data)} custom entries.")
+#     return custom_data
+
+
+# def load_and_merge_data(custom_data_path=None):
+#     """
+#     Loads Alpaca and optionally merges your custom data.
+#     """
+#     # load alpaca
+#     data = load_alpaca_data()
+
+#     # merge custom entries if provided
+#     if custom_data_path:
+#         custom = load_custom_data(custom_data_path)
+#         data = data + custom   # append your entries at the end
+#         print(f"Total after merge: {len(data)} entries.")
+
+#     return data
 # ─────────────────────────────────────────────
 # 2. ALPACA PROMPT FORMAT (exactly as Chapter 7)
 # ─────────────────────────────────────────────
@@ -231,6 +259,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data = load_alpaca_data()
+    # data = load_and_merge_data(
+    #     custom_data_path="my_custom_data.json"
+    # )
     train_data, val_data, test_data = split_data(data)
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data, tokenizer, device
