@@ -116,6 +116,7 @@ class LinearWithLoRA(nn.Module):
             out_features = linear.out_features,
             rank         = rank
         )
+        self.lora = self.lora.to(next(linear.parameters()).device)
 
         # freeze the original linear weights
         # confirmed from paper — W0 does not receive gradient updates
