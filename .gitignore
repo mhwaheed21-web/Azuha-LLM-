@@ -2,3 +2,4 @@
 *pretraining_step4/ch5.ipynb
 __pycache__/
 *.pyc
+*.pth
