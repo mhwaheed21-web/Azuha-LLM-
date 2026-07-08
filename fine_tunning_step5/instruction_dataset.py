@@ -663,7 +663,7 @@ def create_dataloaders(train_data, val_data, test_data,
     customized_collate = partial(
         custom_collate_fn,
         device=device,
-        allowed_max_length=1024
+        allowed_max_length=1024 #reduce to 512 if you run out of GPU memory
     )
 
     train_loader = DataLoader(
@@ -716,7 +716,7 @@ if __name__ == "__main__":
         train_data, val_data, test_data,
         tokenizer=tokenizer,
         device=device,
-        batch_size=8
+        batch_size=2
     )
 
     # print first batch shape
