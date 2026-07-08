@@ -754,8 +754,8 @@ if __name__ == "__main__":
     data = load_and_merge_data(
     use_oasst1=True,
     use_alpaca=True,
-    custom_data_path=Path(__file__).resolve().parent / "hamza_azuha_dataset.json",
-    personal_repeat=20)
+    custom_data_path=Path(__file__).resolve().parent / "my_custom_data.json",
+    personal_repeat=50)
     train_data, val_data, test_data = split_data(data)
 
     
@@ -763,7 +763,7 @@ if __name__ == "__main__":
         train_data, val_data, test_data,
         tokenizer=tokenizer,
         device=device,
-        batch_size=8    # reduce to 4 if you run out of GPU memory
+        batch_size=2    # reduce to 4 if you run out of GPU memory
     )
 
     # ── model config ──
@@ -778,6 +778,15 @@ if __name__ == "__main__":
     )
     model = GPTModel(cfg)
     load_weights_into_gpt(model, params)
+    
+# to finetune pretrained model
+    # model = GPTModel(cfg)
+    # apply_lora(model, rank=LORA_RANK)   # inject LoRA structure first
+    # model.load_state_dict(
+    #     torch.load("gpt2-small124M-lora-r4-sft.pth",
+    #             map_location=device, weights_only=True)
+    # )
+
     model.to(device)
 
     # ===== Added checks =====
@@ -797,6 +806,7 @@ if __name__ == "__main__":
     # the optimizer is created — order matters because
     # apply_lora() freezes weights and the optimizer must
     # only see the trainable LoRA params after that
+    #if a pretrained model is loaded, you can skip this step and just uncomment the model loading lines above
     # ═══════════════════════════════════════════════════════
     if USE_LORA:
         print(f"\nApplying LoRA (rank={LORA_RANK})...")
