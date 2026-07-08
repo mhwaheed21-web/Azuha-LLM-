@@ -282,31 +282,498 @@
 
 
 
+#-------------------------------------------------------------------------------------------------------------------
+#the code below contained classes that import 2 datasets from internet and merge them with a custom dataset.
+#the code above is a simple version that only imports the alpaca dataset and formats it for training.
+#-------------------------------------------------------------------------------------------------------------------
 
 
 
 
 
 
+# # instruction_dataset.py
+# # Chapter 7 — data preparation for instruction fine-tuning
+# #
+# # Loads and merges THREE data sources:
+# #   1. OpenAssistant oasst1  — 84,400 rows, Apache 2.0 license
+# #      Filtered to: English only, non-deleted, best-ranked assistant replies
+# #   2. Alpaca                — 52,002 instruction-response pairs, CC BY-NC 4.0
+# #   3. Your custom JSON      — personal data about Hamza and Azuha
+# #
+# # Final merged dataset is split into train / val / test and
+# # wrapped into PyTorch DataLoaders ready for fine-tuning.
+# #
+# # Key difference from previous version:
+# #   oasst1 is a CONVERSATION TREE, not a flat list.
+# #   Each prompter message can have multiple assistant replies.
+# #   We extract only: English, non-deleted, rank=0 (highest quality) pairs.
+# #
+# # Folder: fine_tunning_step5/instruction_dataset.py
+
+# import json
+# import random
+# import torch
+# import tiktoken
+# from pathlib import Path
+# from functools import partial
+# from torch.utils.data import Dataset, DataLoader
+
+
+# # ─────────────────────────────────────────────
+# # 1. LOAD OASST1
+# #    Extracts clean English prompter→assistant pairs
+# #    from the conversation tree structure.
+# # ─────────────────────────────────────────────
+
+# def load_oasst1_data(lang="en", min_quality=0.6):
+#     """
+#     Loads OpenAssistant oasst1 and extracts clean instruction-response pairs.
+
+#     oasst1 is a conversation tree. Each row is either a 'prompter' message
+#     or an 'assistant' message. We extract pairs by:
+#         1. Filter to English only (lang == 'en')
+#         2. Remove deleted messages
+#         3. Keep only assistant messages with rank == 0
+#            (rank 0 = the highest-voted reply to that prompt)
+#         4. Find the parent prompter message for each assistant reply
+#         5. Return as flat list of {instruction, input, output} dicts
+
+#     Args:
+#         lang        : language filter — 'en' for English only
+#         min_quality : minimum quality score filter (0.0 to 1.0)
+#                       based on the 'quality' label in the dataset
+#                       I am not certain this threshold is optimal — verify
+#                       by inspecting the data and adjusting.
+
+#     Returns:
+#         list of dicts with keys: instruction, input, output
+#     """
+#     from datasets import load_dataset
+
+#     print("Loading oasst1 dataset...")
+#     dataset = load_dataset("OpenAssistant/oasst1")
+
+#     # combine train and validation into one pool for extraction
+#     all_rows = dataset["train"].to_list() + dataset["validation"].to_list()
+#     print(f"Total oasst1 rows: {len(all_rows)}")
+
+#     # build a lookup dict: message_id -> row
+#     # so we can find parent messages quickly
+#     id_to_row = {row["message_id"]: row for row in all_rows}
+
+#     pairs = []
+#     skipped = 0
+
+#     for row in all_rows:
+#         # only process assistant messages
+#         if row["role"] != "assistant":
+#             continue
+
+#         # skip deleted messages
+#         if row.get("deleted", False):
+#             continue
+
+#         # only English
+#         if row.get("lang", "") != lang:
+#             continue
+
+#         # rank == 0 means this is the best-ranked assistant reply
+#         # for this particular prompt (lower rank = better)
+#         # None means no ranking was done — skip those
+#         if row.get("rank") != 0:
+#             continue
+
+#         # find the parent prompter message
+#         parent_id = row.get("parent_id")
+#         if not parent_id or parent_id not in id_to_row:
+#             skipped += 1
+#             continue
+
+#         parent = id_to_row[parent_id]
+
+#         # parent must also be English, non-deleted, and a prompter
+#         if parent.get("role") != "prompter":
+#             continue
+#         if parent.get("deleted", False):
+#             continue
+#         if parent.get("lang", "") != lang:
+#             continue
+
+#         # optional quality filter using the labels field
+#         quality_score = None
+#         labels = row.get("labels")
+#         if labels and isinstance(labels, dict):
+#             names  = labels.get("name", [])
+#             values = labels.get("value", [])
+#             if "quality" in names:
+#                 idx = names.index("quality")
+#                 if idx < len(values):
+#                     quality_score = values[idx]
+
+#         if quality_score is not None and quality_score < min_quality:
+#             skipped += 1
+#             continue
+
+#         pairs.append({
+#             "instruction": parent["text"].strip(),
+#             "input": "",
+#             "output": row["text"].strip()
+#         })
+
+#     print(f"Extracted {len(pairs)} clean oasst1 pairs (skipped {skipped})")
+#     return pairs
+
+
+# # ─────────────────────────────────────────────
+# # 2. LOAD ALPACA
+# # ─────────────────────────────────────────────
+
+# def load_alpaca_data():
+#     """
+#     Loads the Alpaca dataset from HuggingFace.
+#     Returns a list of dicts with keys: instruction, input, output.
+#     Cached after first download — no re-download on subsequent runs.
+#     License: CC BY-NC 4.0 (non-commercial use only).
+#     """
+#     from datasets import load_dataset
+#     print("Loading Alpaca dataset...")
+#     dataset = load_dataset("tatsu-lab/alpaca")
+#     data = dataset["train"].to_list()
+#     print(f"Loaded {len(data)} Alpaca entries.")
+#     return data
+
+
+# # ─────────────────────────────────────────────
+# # 3. LOAD CUSTOM PERSONAL DATA
+# # ─────────────────────────────────────────────
+
+# def load_custom_data(file_path):
+#     """
+#     Loads your personal Hamza/Azuha dataset from a JSON file.
+#     Generated by generate_dataset.py.
+#     Format: list of {instruction, input, output} dicts.
+#     """
+#     path = Path(file_path)
+#     if not path.exists():
+#         print(f"Custom data file not found: {file_path}")
+#         print("Skipping custom data — run generate_dataset.py first.")
+#         return []
+
+#     with open(path, "r", encoding="utf-8") as f:
+#         data = json.load(f)
+
+#     print(f"Loaded {len(data)} custom personal entries from {file_path}")
+#     return data
+
+
+# # ─────────────────────────────────────────────
+# # 4. MERGE ALL THREE SOURCES
+# # ─────────────────────────────────────────────
+
+# def load_and_merge_data(
+#     use_oasst1=True,
+#     use_alpaca=True,
+#     custom_data_path=None,
+#     personal_repeat=20,
+#     oasst1_lang="en",
+#     oasst1_min_quality=0.6,
+#     shuffle=True
+# ):
+#     """
+#     Loads and merges oasst1, Alpaca, and custom personal data.
+
+#     Args:
+#         use_oasst1       : whether to include oasst1
+#         use_alpaca       : whether to include Alpaca
+#         custom_data_path : path to your personal JSON file (or None to skip)
+#         personal_repeat  : how many times to repeat personal entries
+#                            to ensure the model learns them despite being
+#                            a small fraction of the total data.
+#                            I am not certain of the ideal value — start at 20
+#                            and adjust based on whether the model remembers
+#                            personal facts after fine-tuning.
+#         oasst1_lang      : language filter for oasst1
+#         oasst1_min_quality: minimum quality threshold for oasst1 pairs
+#         shuffle          : whether to shuffle the merged dataset
+
+#     Returns:
+#         merged list of {instruction, input, output} dicts
+#     """
+#     merged = []
+
+#     if use_oasst1:
+#         oasst1_data = load_oasst1_data(
+#             lang=oasst1_lang,
+#             min_quality=oasst1_min_quality
+#         )
+#         merged += oasst1_data
+
+#     if use_alpaca:
+#         alpaca_data = load_alpaca_data()
+#         merged += alpaca_data
+
+#     if custom_data_path:
+#         custom_data = load_custom_data(custom_data_path)
+#         if custom_data:
+#             # repeat personal entries so model learns them reliably
+#             repeated = custom_data * personal_repeat
+#             merged += repeated
+#             print(f"Personal data: {len(custom_data)} entries × {personal_repeat} = {len(repeated)} total")
+
+#     print(f"\nTotal merged entries: {len(merged)}")
+
+#     if shuffle:
+#         random.shuffle(merged)
+
+#     return merged
+
+
+# # ─────────────────────────────────────────────
+# # 5. ALPACA PROMPT FORMAT — same as before
+# # ─────────────────────────────────────────────
+
+# def format_input(entry):
+#     """
+#     Formats a dataset entry into the Alpaca prompt style.
+#     Works for all three data sources since they all share
+#     the same {instruction, input, output} structure.
+#     """
+#     instruction_text = (
+#         f"Below is an instruction that describes a task. "
+#         f"Write a response that appropriately completes the request."
+#         f"\n\n### Instruction:\n{entry['instruction']}"
+#     )
+#     input_text = (
+#         f"\n\n### Input:\n{entry['input']}" if entry.get("input") else ""
+#     )
+#     return instruction_text + input_text
+
+
+# # ─────────────────────────────────────────────
+# # 6. TRAIN / VAL / TEST SPLIT
+# # ─────────────────────────────────────────────
+
+# def split_data(data, train_frac=0.85, test_frac=0.10):
+#     """
+#     Splits into train (85%), test (10%), val (5%).
+#     Same ratios as Chapter 7 of the book.
+#     """
+#     train_portion = int(len(data) * train_frac)
+#     test_portion  = int(len(data) * test_frac)
+
+#     train_data = data[:train_portion]
+#     test_data  = data[train_portion:train_portion + test_portion]
+#     val_data   = data[train_portion + test_portion:]
+
+#     print(f"Training set  : {len(train_data)} entries")
+#     print(f"Validation set: {len(val_data)} entries")
+#     print(f"Test set      : {len(test_data)} entries")
+
+#     return train_data, val_data, test_data
+
+
+# # ─────────────────────────────────────────────
+# # 7. INSTRUCTION DATASET CLASS
+# # ─────────────────────────────────────────────
+
+# class InstructionDataset(Dataset):
+#     """
+#     Tokenizes and stores all instruction-response pairs.
+#     Replaces GPTDatasetV1 from Chapter 2.
+#     All tokenization done in __init__ — not repeated per batch.
+#     """
+#     def __init__(self, data, tokenizer):
+#         self.data = data
+#         self.encoded_texts = []
+
+#         for entry in data:
+#             instruction_plus_input = format_input(entry)
+#             response_text = f"\n\n### Response:\n{entry['output']}"
+#             full_text = instruction_plus_input + response_text
+#             self.encoded_texts.append(
+#                 tokenizer.encode(full_text)
+#             )
+
+#     def __getitem__(self, index):
+#         return self.encoded_texts[index]
+
+#     def __len__(self):
+#         return len(self.data)
+
+
+# # ─────────────────────────────────────────────
+# # 8. CUSTOM COLLATE FUNCTION
+# # ─────────────────────────────────────────────
+
+# def custom_collate_fn(
+#     batch,
+#     pad_token_id=50256,
+#     ignore_index=-100,
+#     allowed_max_length=None,
+#     device="cpu"
+# ):
+#     """
+#     Pads sequences to same length. Replaces all but the first
+#     padding token in targets with -100 so cross_entropy ignores them.
+#     This is the Chapter 7 collate approach — unchanged.
+#     """
+#     batch_max_length = max(len(item) + 1 for item in batch)
+#     inputs_lst, targets_lst = [], []
+
+#     for item in batch:
+#         new_item = item.copy()
+#         new_item += [pad_token_id]
+#         padded = (
+#             new_item +
+#             [pad_token_id] * (batch_max_length - len(new_item))
+#         )
+
+#         inputs  = torch.tensor(padded[:-1])
+#         targets = torch.tensor(padded[1:])
+
+#         mask = targets == pad_token_id
+#         indices = torch.nonzero(mask).squeeze()
+#         if indices.numel() > 1:
+#             targets[indices[1:]] = ignore_index
+
+#         if allowed_max_length is not None:
+#             inputs  = inputs[:allowed_max_length]
+#             targets = targets[:allowed_max_length]
+
+#         inputs_lst.append(inputs)
+#         targets_lst.append(targets)
+
+#     return (
+#         torch.stack(inputs_lst).to(device),
+#         torch.stack(targets_lst).to(device)
+#     )
+
+
+# # ─────────────────────────────────────────────
+# # 9. CREATE DATALOADERS
+# # ─────────────────────────────────────────────
+
+# def create_dataloaders(train_data, val_data, test_data,
+#                        tokenizer, device, batch_size=8):
+#     """
+#     Creates train, val, test DataLoaders.
+#     Uses functools.partial to pre-fill device and allowed_max_length
+#     into custom_collate_fn before passing to DataLoader.
+#     """
+#     customized_collate = partial(
+#         custom_collate_fn,
+#         device=device,
+#         allowed_max_length=1024 #reduce to 512 if you run out of GPU memory
+#     )
+
+#     train_loader = DataLoader(
+#         InstructionDataset(train_data, tokenizer),
+#         batch_size=batch_size,
+#         shuffle=True,
+#         drop_last=True,
+#         collate_fn=customized_collate,
+#         num_workers=0
+#     )
+#     val_loader = DataLoader(
+#         InstructionDataset(val_data, tokenizer),
+#         batch_size=batch_size,
+#         shuffle=False,
+#         drop_last=False,
+#         collate_fn=customized_collate,
+#         num_workers=0
+#     )
+#     test_loader = DataLoader(
+#         InstructionDataset(test_data, tokenizer),
+#         batch_size=batch_size,
+#         shuffle=False,
+#         drop_last=False,
+#         collate_fn=customized_collate,
+#         num_workers=0
+#     )
+
+#     return train_loader, val_loader, test_loader
+
+
+# # ─────────────────────────────────────────────
+# # QUICK TEST — run this file directly to verify
+# # python fine_tunning_step5/instruction_dataset.py
+# # ─────────────────────────────────────────────
+
+# if __name__ == "__main__":
+#     tokenizer = tiktoken.get_encoding("gpt2")
+#     device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+#     # adjust custom_data_path to where your generated file is
+#     data = load_and_merge_data(
+#         use_oasst1=True,
+#         use_alpaca=True,
+#         custom_data_path=Path(__file__).resolve().parent / "my_custom_data.json",
+#         personal_repeat=50
+#     )
+
+#     train_data, val_data, test_data = split_data(data)
+#     train_loader, val_loader, test_loader = create_dataloaders(
+#         train_data, val_data, test_data,
+#         tokenizer=tokenizer,
+#         device=device,
+#         batch_size=2
+#     )
+
+#     # print first batch shape
+#     for inputs, targets in train_loader:
+#         print("inputs shape :", inputs.shape)
+#         print("targets shape:", targets.shape)
+#         break
+
+#     # print one example to verify format
+#     print("\n--- Example formatted entry ---")
+#     print(format_input(train_data[0]))
+#     print(f"\n### Response:\n{train_data[0]['output']}")
+
+
+
+
+
+
+
+
+
+
+#-----------------------------------------------------------------------------------------
+#the code below imports 2 datasets from internet and merges them with a custom dataset.
+#but the format of data is more as a assistant 
+#-----------------------------------------------------------------------------------------
 
 
 
 # instruction_dataset.py
-# Chapter 7 — data preparation for instruction fine-tuning
+# Data pipeline for Azuha — User/Azuha chat format
 #
-# Loads and merges THREE data sources:
-#   1. OpenAssistant oasst1  — 84,400 rows, Apache 2.0 license
-#      Filtered to: English only, non-deleted, best-ranked assistant replies
-#   2. Alpaca                — 52,002 instruction-response pairs, CC BY-NC 4.0
-#   3. Your custom JSON      — personal data about Hamza and Azuha
+# Loads and merges THREE datasets:
+#   1. HuggingFaceTB/everyday-conversations-llama3.1-2k
+#      Apache 2.0 — 2,260 short multi-turn conversations
+#      Confirmed structure: messages column with role: user / role: assistant
+#      Purpose: teaches natural greeting and everyday conversation behavior
+#      (HuggingFace's own card says this fixes small LLMs failing on "Hi")
 #
-# Final merged dataset is split into train / val / test and
-# wrapped into PyTorch DataLoaders ready for fine-tuning.
+#   2. HuggingFaceH4/ultrachat_200k
+#      MIT license — 200,000 multi-turn conversations
+#      Same messages format: role: user / role: assistant
+#      Purpose: general conversational intelligence and instruction following
+#      We sample a subset to keep training manageable
 #
-# Key difference from previous version:
-#   oasst1 is a CONVERSATION TREE, not a flat list.
-#   Each prompter message can have multiple assistant replies.
-#   We extract only: English, non-deleted, rank=0 (highest quality) pairs.
+#   3. Your custom hamza_azuha_dataset.json
+#      Personal data about Hamza and Azuha's identity
+#      Generated by generate_dataset.py
+#      Repeated personal_repeat times so model learns it despite small size
+#
+# Training format — every sample becomes:
+#   User: <user message>
+#   Azuha: <assistant message>
+#
+# This is a flat single-turn format extracted from multi-turn conversations.
+# Each user/assistant exchange becomes one training sample.
 #
 # Folder: fine_tunning_step5/instruction_dataset.py
 
@@ -320,207 +787,207 @@ from torch.utils.data import Dataset, DataLoader
 
 
 # ─────────────────────────────────────────────
-# 1. LOAD OASST1
-#    Extracts clean English prompter→assistant pairs
-#    from the conversation tree structure.
+# 1. FORMAT FUNCTION — User/Azuha chat style
+#    This is the ONLY place the format is defined.
+#    Change it here and it changes everywhere.
 # ─────────────────────────────────────────────
 
-def load_oasst1_data(lang="en", min_quality=0.6):
+def format_input(user_message, extra_input=""):
     """
-    Loads OpenAssistant oasst1 and extracts clean instruction-response pairs.
+    Formats a user message into the prompt fed to the model.
+    The model learns to complete everything after 'Azuha:'
 
-    oasst1 is a conversation tree. Each row is either a 'prompter' message
-    or an 'assistant' message. We extract pairs by:
-        1. Filter to English only (lang == 'en')
-        2. Remove deleted messages
-        3. Keep only assistant messages with rank == 0
-           (rank 0 = the highest-voted reply to that prompt)
-        4. Find the parent prompter message for each assistant reply
-        5. Return as flat list of {instruction, input, output} dicts
+    Output:
+        User: <user_message>
+        Azuha:
 
-    Args:
-        lang        : language filter — 'en' for English only
-        min_quality : minimum quality score filter (0.0 to 1.0)
-                      based on the 'quality' label in the dataset
-                      I am not certain this threshold is optimal — verify
-                      by inspecting the data and adjusting.
+    If extra_input is provided (optional context):
+        User: <user_message>
+        <extra_input>
+        Azuha:
+    """
+    if extra_input:
+        return f"User: {user_message}\n{extra_input}\nAzuha:"
+    return f"User: {user_message}\nAzuha:"
 
-    Returns:
-        list of dicts with keys: instruction, input, output
+
+def format_full(user_message, assistant_message, extra_input=""):
+    """
+    Formats a complete user+assistant exchange for training.
+    The model sees the full text and learns to predict the response.
+
+    Output:
+        User: <user_message>
+        Azuha: <assistant_message>
+    """
+    prompt = format_input(user_message, extra_input)
+    return f"{prompt} {assistant_message}"
+
+
+# ─────────────────────────────────────────────
+# 2. LOAD EVERYDAY-CONVERSATIONS
+#    Confirmed structure from HuggingFace page:
+#    dataset["train_sft"] — each row has "messages" column
+#    messages = [{"role": "user", "content": "..."}, {"role": "assistant", ...}]
+#    Multi-turn: we extract each user/assistant pair separately
+# ─────────────────────────────────────────────
+
+def load_everyday_conversations():
+    """
+    Loads HuggingFaceTB/everyday-conversations-llama3.1-2k.
+    License: Apache 2.0
+    Extracts all user/assistant pairs from multi-turn conversations.
+    Each pair becomes one flat training sample.
     """
     from datasets import load_dataset
 
-    print("Loading oasst1 dataset...")
-    dataset = load_dataset("OpenAssistant/oasst1")
-
-    # combine train and validation into one pool for extraction
-    all_rows = dataset["train"].to_list() + dataset["validation"].to_list()
-    print(f"Total oasst1 rows: {len(all_rows)}")
-
-    # build a lookup dict: message_id -> row
-    # so we can find parent messages quickly
-    id_to_row = {row["message_id"]: row for row in all_rows}
+    print("Loading everyday-conversations dataset...")
+    dataset = load_dataset("HuggingFaceTB/everyday-conversations-llama3.1-2k")
 
     pairs = []
-    skipped = 0
+    for row in dataset["train_sft"]:
+        messages = row["messages"]
+        # walk through messages in pairs
+        for idx in range(0, len(messages) - 1, 2):
+            if (messages[idx]["role"] == "user" and
+                    idx + 1 < len(messages) and
+                    messages[idx + 1]["role"] == "assistant"):
+                pairs.append({
+                    "user": messages[idx]["content"].strip(),
+                    "assistant": messages[idx + 1]["content"].strip()
+                })
 
-    for row in all_rows:
-        # only process assistant messages
-        if row["role"] != "assistant":
-            continue
-
-        # skip deleted messages
-        if row.get("deleted", False):
-            continue
-
-        # only English
-        if row.get("lang", "") != lang:
-            continue
-
-        # rank == 0 means this is the best-ranked assistant reply
-        # for this particular prompt (lower rank = better)
-        # None means no ranking was done — skip those
-        if row.get("rank") != 0:
-            continue
-
-        # find the parent prompter message
-        parent_id = row.get("parent_id")
-        if not parent_id or parent_id not in id_to_row:
-            skipped += 1
-            continue
-
-        parent = id_to_row[parent_id]
-
-        # parent must also be English, non-deleted, and a prompter
-        if parent.get("role") != "prompter":
-            continue
-        if parent.get("deleted", False):
-            continue
-        if parent.get("lang", "") != lang:
-            continue
-
-        # optional quality filter using the labels field
-        quality_score = None
-        labels = row.get("labels")
-        if labels and isinstance(labels, dict):
-            names  = labels.get("name", [])
-            values = labels.get("value", [])
-            if "quality" in names:
-                idx = names.index("quality")
-                if idx < len(values):
-                    quality_score = values[idx]
-
-        if quality_score is not None and quality_score < min_quality:
-            skipped += 1
-            continue
-
-        pairs.append({
-            "instruction": parent["text"].strip(),
-            "input": "",
-            "output": row["text"].strip()
-        })
-
-    print(f"Extracted {len(pairs)} clean oasst1 pairs (skipped {skipped})")
+    print(f"Extracted {len(pairs)} pairs from everyday-conversations.")
     return pairs
 
 
 # ─────────────────────────────────────────────
-# 2. LOAD ALPACA
+# 3. LOAD ULTRACHAT 200K
+#    Same messages format as everyday-conversations.
+#    We sample a subset — full 200k is too large for GPT-2 small.
 # ─────────────────────────────────────────────
 
-def load_alpaca_data():
+def load_ultrachat(num_samples=20000):
     """
-    Loads the Alpaca dataset from HuggingFace.
-    Returns a list of dicts with keys: instruction, input, output.
-    Cached after first download — no re-download on subsequent runs.
-    License: CC BY-NC 4.0 (non-commercial use only).
+    Loads HuggingFaceH4/ultrachat_200k.
+    License: MIT
+    Samples num_samples conversations then extracts all user/assistant pairs.
+
+    Args:
+        num_samples: how many conversations to sample from the full 200k.
+                     I am not certain of the ideal number for GPT-2 small.
+                     Start at 20,000. Reduce if training is too slow.
     """
     from datasets import load_dataset
-    print("Loading Alpaca dataset...")
-    dataset = load_dataset("tatsu-lab/alpaca")
-    data = dataset["train"].to_list()
-    print(f"Loaded {len(data)} Alpaca entries.")
-    return data
+
+    print(f"Loading ultrachat_200k (sampling {num_samples} conversations)...")
+    dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+
+    # sample a subset
+    indices = random.sample(range(len(dataset)), min(num_samples, len(dataset)))
+    sampled = dataset.select(indices)
+
+    pairs = []
+    for row in sampled:
+        messages = row["messages"]
+        for idx in range(0, len(messages) - 1, 2):
+            if (messages[idx]["role"] == "user" and
+                    idx + 1 < len(messages) and
+                    messages[idx + 1]["role"] == "assistant"):
+                user_msg = messages[idx]["content"].strip()
+                asst_msg = messages[idx + 1]["content"].strip()
+
+                # skip very long responses that will exceed context window
+                # GPT-2 has 1024 token limit — rough character heuristic
+                if len(user_msg) + len(asst_msg) > 2000:
+                    continue
+
+                pairs.append({
+                    "user": user_msg,
+                    "assistant": asst_msg
+                })
+
+    print(f"Extracted {len(pairs)} pairs from ultrachat.")
+    return pairs
 
 
 # ─────────────────────────────────────────────
-# 3. LOAD CUSTOM PERSONAL DATA
+# 4. LOAD CUSTOM PERSONAL DATA
+#    Generated by generate_dataset.py
+#    Format: list of {"messages": [{"role": "user"}, {"role": "assistant"}]}
 # ─────────────────────────────────────────────
 
 def load_custom_data(file_path):
     """
-    Loads your personal Hamza/Azuha dataset from a JSON file.
-    Generated by generate_dataset.py.
-    Format: list of {instruction, input, output} dicts.
+    Loads hamza_azuha_dataset.json generated by generate_dataset.py.
+    Converts from messages format to flat user/assistant pairs.
     """
     path = Path(file_path)
     if not path.exists():
-        print(f"Custom data file not found: {file_path}")
-        print("Skipping custom data — run generate_dataset.py first.")
+        print(f"Custom data not found at {file_path}")
+        print("Run generate_dataset.py first.")
         return []
 
     with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        raw = json.load(f)
 
-    print(f"Loaded {len(data)} custom personal entries from {file_path}")
-    return data
+    pairs = []
+    for item in raw:
+        messages = item.get("messages", [])
+        if len(messages) >= 2:
+            pairs.append({
+                "user": messages[0]["content"].strip(),
+                "assistant": messages[1]["content"].strip()
+            })
+
+    print(f"Loaded {len(pairs)} custom personal entries.")
+    return pairs
 
 
 # ─────────────────────────────────────────────
-# 4. MERGE ALL THREE SOURCES
+# 5. MERGE ALL SOURCES
 # ─────────────────────────────────────────────
 
 def load_and_merge_data(
-    use_oasst1=True,
-    use_alpaca=True,
+    use_everyday=True,
+    use_ultrachat=True,
+    ultrachat_samples=20000,
     custom_data_path=None,
     personal_repeat=20,
-    oasst1_lang="en",
-    oasst1_min_quality=0.6,
     shuffle=True
 ):
     """
-    Loads and merges oasst1, Alpaca, and custom personal data.
+    Loads and merges all three data sources into one flat list of
+    {"user": ..., "assistant": ...} dicts.
 
     Args:
-        use_oasst1       : whether to include oasst1
-        use_alpaca       : whether to include Alpaca
-        custom_data_path : path to your personal JSON file (or None to skip)
-        personal_repeat  : how many times to repeat personal entries
-                           to ensure the model learns them despite being
-                           a small fraction of the total data.
-                           I am not certain of the ideal value — start at 20
-                           and adjust based on whether the model remembers
-                           personal facts after fine-tuning.
-        oasst1_lang      : language filter for oasst1
-        oasst1_min_quality: minimum quality threshold for oasst1 pairs
-        shuffle          : whether to shuffle the merged dataset
-
-    Returns:
-        merged list of {instruction, input, output} dicts
+        use_everyday     : include everyday-conversations (recommended: True)
+        use_ultrachat    : include ultrachat (recommended: True)
+        ultrachat_samples: how many ultrachat conversations to sample
+        custom_data_path : path to hamza_azuha_dataset.json
+        personal_repeat  : repeat personal data this many times so model
+                           learns it despite being a small fraction of total.
+                           I am not certain of the ideal value — start at 20.
+                           If Azuha does not answer personal questions after
+                           training, increase this to 50.
+        shuffle          : shuffle the merged dataset
     """
     merged = []
 
-    if use_oasst1:
-        oasst1_data = load_oasst1_data(
-            lang=oasst1_lang,
-            min_quality=oasst1_min_quality
-        )
-        merged += oasst1_data
+    if use_everyday:
+        merged += load_everyday_conversations()
 
-    if use_alpaca:
-        alpaca_data = load_alpaca_data()
-        merged += alpaca_data
+    if use_ultrachat:
+        merged += load_ultrachat(num_samples=ultrachat_samples)
 
     if custom_data_path:
-        custom_data = load_custom_data(custom_data_path)
-        if custom_data:
-            # repeat personal entries so model learns them reliably
-            repeated = custom_data * personal_repeat
+        custom = load_custom_data(custom_data_path)
+        if custom:
+            repeated = custom * personal_repeat
             merged += repeated
-            print(f"Personal data: {len(custom_data)} entries × {personal_repeat} = {len(repeated)} total")
+            print(f"Personal data: {len(custom)} × {personal_repeat} = {len(repeated)} entries")
 
-    print(f"\nTotal merged entries: {len(merged)}")
+    print(f"\nTotal merged pairs: {len(merged)}")
 
     if shuffle:
         random.shuffle(merged)
@@ -529,80 +996,53 @@ def load_and_merge_data(
 
 
 # ─────────────────────────────────────────────
-# 5. ALPACA PROMPT FORMAT — same as before
-# ─────────────────────────────────────────────
-
-def format_input(entry):
-    """
-    Formats a dataset entry into the Alpaca prompt style.
-    Works for all three data sources since they all share
-    the same {instruction, input, output} structure.
-    """
-    instruction_text = (
-        f"Below is an instruction that describes a task. "
-        f"Write a response that appropriately completes the request."
-        f"\n\n### Instruction:\n{entry['instruction']}"
-    )
-    input_text = (
-        f"\n\n### Input:\n{entry['input']}" if entry.get("input") else ""
-    )
-    return instruction_text + input_text
-
-
-# ─────────────────────────────────────────────
-# 6. TRAIN / VAL / TEST SPLIT
+# 6. SPLIT
 # ─────────────────────────────────────────────
 
 def split_data(data, train_frac=0.85, test_frac=0.10):
-    """
-    Splits into train (85%), test (10%), val (5%).
-    Same ratios as Chapter 7 of the book.
-    """
-    train_portion = int(len(data) * train_frac)
-    test_portion  = int(len(data) * test_frac)
+    """Splits data into train (85%), test (10%), val (5%)."""
+    train_end = int(len(data) * train_frac)
+    test_end  = train_end + int(len(data) * test_frac)
 
-    train_data = data[:train_portion]
-    test_data  = data[train_portion:train_portion + test_portion]
-    val_data   = data[train_portion + test_portion:]
+    train_data = data[:train_end]
+    test_data  = data[train_end:test_end]
+    val_data   = data[test_end:]
 
-    print(f"Training set  : {len(train_data)} entries")
-    print(f"Validation set: {len(val_data)} entries")
-    print(f"Test set      : {len(test_data)} entries")
+    print(f"Training set  : {len(train_data)}")
+    print(f"Validation set: {len(val_data)}")
+    print(f"Test set      : {len(test_data)}")
 
     return train_data, val_data, test_data
 
 
 # ─────────────────────────────────────────────
-# 7. INSTRUCTION DATASET CLASS
+# 7. DATASET CLASS
 # ─────────────────────────────────────────────
 
-class InstructionDataset(Dataset):
+class AzuhaDataset(Dataset):
     """
-    Tokenizes and stores all instruction-response pairs.
-    Replaces GPTDatasetV1 from Chapter 2.
-    All tokenization done in __init__ — not repeated per batch.
+    Tokenizes and stores user/assistant pairs in User/Azuha format.
+    Each training sample is the full text:
+        User: <user_message>
+        Azuha: <assistant_message>
+    Tokenized once in __init__ for efficiency.
     """
     def __init__(self, data, tokenizer):
-        self.data = data
-        self.encoded_texts = []
+        self.encoded = []
+        for item in data:
+            full_text = format_full(item["user"], item["assistant"])
+            self.encoded.append(tokenizer.encode(full_text))
 
-        for entry in data:
-            instruction_plus_input = format_input(entry)
-            response_text = f"\n\n### Response:\n{entry['output']}"
-            full_text = instruction_plus_input + response_text
-            self.encoded_texts.append(
-                tokenizer.encode(full_text)
-            )
-
-    def __getitem__(self, index):
-        return self.encoded_texts[index]
+    def __getitem__(self, idx):
+        return self.encoded[idx]
 
     def __len__(self):
-        return len(self.data)
+        return len(self.encoded)
 
 
 # ─────────────────────────────────────────────
-# 8. CUSTOM COLLATE FUNCTION
+# 8. COLLATE FUNCTION — same logic as before
+#    Pads batch, masks padding with -100 in targets
 # ─────────────────────────────────────────────
 
 def custom_collate_fn(
@@ -612,21 +1052,13 @@ def custom_collate_fn(
     allowed_max_length=None,
     device="cpu"
 ):
-    """
-    Pads sequences to same length. Replaces all but the first
-    padding token in targets with -100 so cross_entropy ignores them.
-    This is the Chapter 7 collate approach — unchanged.
-    """
     batch_max_length = max(len(item) + 1 for item in batch)
     inputs_lst, targets_lst = [], []
 
     for item in batch:
         new_item = item.copy()
         new_item += [pad_token_id]
-        padded = (
-            new_item +
-            [pad_token_id] * (batch_max_length - len(new_item))
-        )
+        padded = new_item + [pad_token_id] * (batch_max_length - len(new_item))
 
         inputs  = torch.tensor(padded[:-1])
         targets = torch.tensor(padded[1:])
@@ -655,47 +1087,33 @@ def custom_collate_fn(
 
 def create_dataloaders(train_data, val_data, test_data,
                        tokenizer, device, batch_size=8):
-    """
-    Creates train, val, test DataLoaders.
-    Uses functools.partial to pre-fill device and allowed_max_length
-    into custom_collate_fn before passing to DataLoader.
-    """
-    customized_collate = partial(
+    collate = partial(
         custom_collate_fn,
         device=device,
-        allowed_max_length=1024 #reduce to 512 if you run out of GPU memory
+        allowed_max_length=1024
     )
 
     train_loader = DataLoader(
-        InstructionDataset(train_data, tokenizer),
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
-        collate_fn=customized_collate,
-        num_workers=0
+        AzuhaDataset(train_data, tokenizer),
+        batch_size=batch_size, shuffle=True,
+        drop_last=True, collate_fn=collate, num_workers=0
     )
     val_loader = DataLoader(
-        InstructionDataset(val_data, tokenizer),
-        batch_size=batch_size,
-        shuffle=False,
-        drop_last=False,
-        collate_fn=customized_collate,
-        num_workers=0
+        AzuhaDataset(val_data, tokenizer),
+        batch_size=batch_size, shuffle=False,
+        drop_last=False, collate_fn=collate, num_workers=0
     )
     test_loader = DataLoader(
-        InstructionDataset(test_data, tokenizer),
-        batch_size=batch_size,
-        shuffle=False,
-        drop_last=False,
-        collate_fn=customized_collate,
-        num_workers=0
+        AzuhaDataset(test_data, tokenizer),
+        batch_size=batch_size, shuffle=False,
+        drop_last=False, collate_fn=collate, num_workers=0
     )
 
     return train_loader, val_loader, test_loader
 
 
 # ─────────────────────────────────────────────
-# QUICK TEST — run this file directly to verify
+# QUICK TEST
 # python fine_tunning_step5/instruction_dataset.py
 # ─────────────────────────────────────────────
 
@@ -703,29 +1121,26 @@ if __name__ == "__main__":
     tokenizer = tiktoken.get_encoding("gpt2")
     device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # adjust custom_data_path to where your generated file is
+    custom_path = Path(__file__).resolve().parent / "hamza_azuha_dataset.json"
+
     data = load_and_merge_data(
-        use_oasst1=True,
-        use_alpaca=True,
-        custom_data_path=Path(__file__).resolve().parent / "my_custom_data.json",
-        personal_repeat=50
+        use_everyday=True,
+        use_ultrachat=True,
+        ultrachat_samples=20000,
+        custom_data_path=custom_path,
+        personal_repeat=20
     )
 
     train_data, val_data, test_data = split_data(data)
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
-        tokenizer=tokenizer,
-        device=device,
-        batch_size=2
+        tokenizer=tokenizer, device=device, batch_size=8
     )
 
-    # print first batch shape
     for inputs, targets in train_loader:
         print("inputs shape :", inputs.shape)
         print("targets shape:", targets.shape)
         break
 
-    # print one example to verify format
-    print("\n--- Example formatted entry ---")
-    print(format_input(train_data[0]))
-    print(f"\n### Response:\n{train_data[0]['output']}")
+    print("\n--- Sample formatted entry ---")
+    print(format_full(train_data[0]["user"], train_data[0]["assistant"]))

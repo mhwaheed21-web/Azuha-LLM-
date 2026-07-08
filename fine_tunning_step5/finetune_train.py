@@ -445,6 +445,13 @@
 
 
 
+#-----------------------------------------------------------------------------------------
+#the code below imports 2 datasets from internet and merges them with a custom dataset.
+#but the format of data is more as a assistant 
+#the double commented part in both above and below is the part where some changes were made to see cuda working and some stuff like that its simple version is commented and other is in use
+#----------------------------------------------------------------------------------------
+
+
 
 
 
@@ -747,9 +754,7 @@ if __name__ == "__main__":
     # ── tokenizer ──
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    # ── data ──
-    # data = load_alpaca_data()
-    # train_data, val_data, test_data = split_data(data)
+    
 
     data = load_and_merge_data(
     use_oasst1=True,
@@ -951,3 +956,11 @@ if __name__ == "__main__":
 #     # ── plot ──
 #     epochs_tensor = torch.linspace(0, NUM_EPOCHS, len(train_losses))
 #     plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+
+
+
+
+
+
+
+
