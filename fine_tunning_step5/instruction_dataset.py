@@ -707,8 +707,8 @@ if __name__ == "__main__":
     data = load_and_merge_data(
         use_oasst1=True,
         use_alpaca=True,
-        custom_data_path=Path(__file__).resolve().parent / "hamza_azuha_dataset.json",
-        personal_repeat=20
+        custom_data_path=Path(__file__).resolve().parent / "my_custom_data.json",
+        personal_repeat=50
     )
 
     train_data, val_data, test_data = split_data(data)
