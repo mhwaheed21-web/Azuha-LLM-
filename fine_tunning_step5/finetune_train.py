@@ -490,9 +490,15 @@ if str(project_root) not in sys.path:
 from llm_architecture_step3.gpt import GPTModel, generate_text_simple
 from pretraining_step4.gpt_download import download_and_load_gpt2
 from pretraining_step4.gpt_generate import load_weights_into_gpt, text_to_token_ids, token_ids_to_text
+# from fine_tunning_step5.instruction_dataset import (
+#     load_alpaca_data, split_data, create_dataloaders, format_input
+# )
+
+
 from fine_tunning_step5.instruction_dataset import (
-    load_alpaca_data, split_data, create_dataloaders, format_input
+    load_and_merge_data, split_data, create_dataloaders, format_input
 )
+
 
 # ═══════════════════════════════════════════════════════
 # ADDED — import LoRA functions from lora.py
@@ -742,8 +748,17 @@ if __name__ == "__main__":
     tokenizer = tiktoken.get_encoding("gpt2")
 
     # ── data ──
-    data = load_alpaca_data()
+    # data = load_alpaca_data()
+    # train_data, val_data, test_data = split_data(data)
+
+    data = load_and_merge_data(
+    use_oasst1=True,
+    use_alpaca=True,
+    custom_data_path=Path(__file__).resolve().parent / "hamza_azuha_dataset.json",
+    personal_repeat=20)
     train_data, val_data, test_data = split_data(data)
+
+    
     train_loader, val_loader, test_loader = create_dataloaders(
         train_data, val_data, test_data,
         tokenizer=tokenizer,
