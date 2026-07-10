@@ -953,7 +953,7 @@ def load_and_merge_data(
     use_ultrachat=True,
     ultrachat_samples=20000,
     custom_data_path=None,
-    personal_repeat=20,
+    personal_repeat=50,
     shuffle=True
 ):
     """
@@ -1090,7 +1090,7 @@ def create_dataloaders(train_data, val_data, test_data,
     collate = partial(
         custom_collate_fn,
         device=device,
-        allowed_max_length=1024
+        allowed_max_length=512  # GPT-2 small context length
     )
 
     train_loader = DataLoader(
@@ -1128,7 +1128,7 @@ if __name__ == "__main__":
         use_ultrachat=True,
         ultrachat_samples=20000,
         custom_data_path=custom_path,
-        personal_repeat=20
+        personal_repeat=50
     )
 
     train_data, val_data, test_data = split_data(data)
