@@ -1,0 +1,8 @@
+datasets==4.0.0
+matplotlib==3.11.0
+numpy==2.5.1
+Requests==2.34.2
+tensorflow==2.20.0
+tiktoken==0.13.0
+torch==2.11.0+cu128
+tqdm==4.67.3

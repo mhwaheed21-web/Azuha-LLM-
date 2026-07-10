@@ -6,3 +6,11 @@ __pycache__/
 data_generator/
 hamza_azuha_dataset.json
 1.py
+
+# OS/editor metadata
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+
+basicworking.ipynb
