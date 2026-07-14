@@ -355,7 +355,7 @@ if __name__ == "__main__":
 
     # path to the model saved by finetune_train.py
     # uses Path relative to this file so it always finds the right folder
-    model_path = Path(__file__).resolve().parent / "azuha-gpt2-small-lora-r4.pth"
+    model_path = Path(__file__).resolve().parent / "gpt2-small124M-lora-r4-sft.pth"
 
     model = load_finetuned_model(str(model_path), device)
 
@@ -378,7 +378,7 @@ if __name__ == "__main__":
             device=device,
             user_message=user_input,
             max_new_tokens=150,
-            temperature=0.0,
+            temperature=0.7,
             top_k=50
         )
         print(f"Azuha: {response}")
