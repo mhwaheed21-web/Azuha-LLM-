@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azuha — Personal AI Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400&family=Ubuntu:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── DESIGN TOKENS ─────────────────────────────────────────── */
+    :root {
+      --aubergine-deep:  #1A0A14;
+      --aubergine:       #300A24;
+      --aubergine-mid:   #3D1230;
+      --aubergine-light: #5E2750;
+      --orange:          #E95420;
+      --orange-dim:      #C84B1A;
+      --orange-glow:     rgba(233, 84, 32, 0.15);
+      --grey-warm:       #AEA79F;
+      --grey-dim:        #77716F;
+      --grey-border:     #4A3040;
+      --white:           #FFFFFF;
+      --white-dim:       rgba(255,255,255,0.85);
+      --green-term:      #4CE94C;
+      --title-bar:       #2C0E22;
+      --font-mono:       'Ubuntu Mono', 'Courier New', monospace;
+      --font-ui:         'Ubuntu', system-ui, sans-serif;
+    }
+
+    /* ─── RESET ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: var(--aubergine-deep);
+      font-family: var(--font-mono);
+      color: var(--white);
+      overflow: hidden;
+    }
+
+    /* ─── DESKTOP ────────────────────────────────────────────────── */
+    .desktop {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(ellipse at 20% 80%, rgba(93,39,80,0.5) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 20%, rgba(233,84,32,0.08) 0%, transparent 50%),
+        linear-gradient(160deg, #1A0A14 0%, #300A24 50%, #1A0A14 100%);
+      position: relative;
+    }
+
+    .desktop::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(174,167,159,0.05) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+    }
+
+    /* ─── WINDOW ─────────────────────────────────────────────────── */
+    .window {
+      width: min(860px, 96vw);
+      height: min(640px, 92vh);
+      display: flex;
+      flex-direction: column;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.07),
+        0 32px 80px rgba(0,0,0,0.7),
+        0 0 60px rgba(93,39,80,0.3);
+      animation: window-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+
+    @keyframes window-in {
+      from { opacity: 0; transform: scale(0.94) translateY(12px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    /* ─── TITLE BAR ──────────────────────────────────────────────── */
+    .titlebar {
+      background: var(--title-bar);
+      height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 8px;
+      flex-shrink: 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      user-select: none;
+    }
+
+    .window-controls { display: flex; gap: 7px; align-items: center; }
+
+    .wc {
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: filter 0.15s;
+    }
+    .wc:hover { filter: brightness(1.25); }
+    .wc-close { background: #E95420; }
+    .wc-min   { background: #C6A818; }
+    .wc-max   { background: #3B9E3B; }
+
+    .titlebar-title {
+      flex: 1;
+      text-align: center;
+      font-family: var(--font-ui);
+      font-size: 12.5px;
+      font-weight: 400;
+      color: var(--grey-warm);
+      letter-spacing: 0.03em;
+    }
+
+    .titlebar-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10.5px;
+      color: var(--grey-dim);
+      font-family: var(--font-ui);
+    }
+
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green-term);
+      box-shadow: 0 0 6px var(--green-term);
+      animation: pulse-dot 2.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ─── TERMINAL BODY ──────────────────────────────────────────── */
+    .terminal {
+      flex: 1;
+      background: var(--aubergine);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .terminal::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.035) 2px,
+        rgba(0,0,0,0.035) 4px
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* ─── BANNER ─────────────────────────────────────────────────── */
+    .banner {
+      padding: 16px 20px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      flex-shrink: 0;
+    }
+
+    .banner-ascii {
+      font-size: 10px;
+      line-height: 1.3;
+      color: var(--orange);
+      white-space: pre;
+      letter-spacing: 0.05em;
+    }
+
+    .banner-meta {
+      margin-top: 8px;
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .banner-meta span {
+      font-size: 11px;
+      color: var(--grey-dim);
+      font-family: var(--font-ui);
+    }
+
+    .banner-meta span b {
+      color: var(--grey-warm);
+      font-weight: 500;
+    }
+
+    /* ─── CHAT LOG ───────────────────────────────────────────────── */
+    .chat-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      position: relative;
+      z-index: 2;
+      scrollbar-width: thin;
+      scrollbar-color: var(--aubergine-light) transparent;
+    }
+
+    .chat-log::-webkit-scrollbar { width: 5px; }
+    .chat-log::-webkit-scrollbar-track { background: transparent; }
+    .chat-log::-webkit-scrollbar-thumb { background: var(--aubergine-light); border-radius: 3px; }
+
+    /* ─── MESSAGE LINES ──────────────────────────────────────────── */
+    .msg-line {
+      display: flex;
+      font-size: 13.5px;
+      line-height: 1.65;
+      animation: line-in 0.18s ease both;
+    }
+
+    @keyframes line-in {
+      from { opacity: 0; transform: translateX(-4px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .msg-prompt { flex-shrink: 0; white-space: nowrap; }
+
+    /* User */
+    .msg-user .p-user   { color: var(--green-term); }
+    .msg-user .p-at     { color: var(--white-dim); }
+    .msg-user .p-host   { color: var(--orange); }
+    .msg-user .p-path   { color: var(--grey-warm); }
+    .msg-user .p-dollar { color: var(--white-dim); }
+    .msg-user .msg-text { color: var(--white); padding-left: 8px; word-break: break-word; }
+
+    /* Azuha */
+    .msg-azuha .p-name  { color: var(--orange); font-weight: 700; }
+    .msg-azuha .p-arrow { color: var(--grey-dim); }
+    .msg-azuha .msg-text { color: #E8DFD8; padding-left: 8px; word-break: break-word; }
+
+    /* System */
+    .msg-system .msg-text { color: var(--grey-dim); font-style: italic; font-size: 12px; }
+
+    /* Error */
+    .msg-error .msg-text { color: #FF6B6B; }
+
+    /* Thinking */
+    .msg-thinking .msg-text { color: var(--grey-dim); }
+
+    .thinking-dots span { animation: blink-dot 1.2s infinite; }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes blink-dot {
+      0%, 80%, 100% { opacity: 0; }
+      40% { opacity: 1; }
+    }
+
+    /* Blinking cursor — the signature element */
+    .cursor-block {
+      display: inline-block;
+      width: 8px; height: 14px;
+      background: var(--orange);
+      vertical-align: text-bottom;
+      margin-left: 2px;
+      animation: blink-cursor 1.1s step-end infinite;
+    }
+
+    @keyframes blink-cursor {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* ─── QUICK BAR ──────────────────────────────────────────────── */
+    .quick-bar {
+      padding: 8px 20px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      position: relative;
+      z-index: 2;
+    }
+
+    .quick-btn {
+      background: none;
+      border: 1px solid var(--grey-border);
+      border-radius: 3px;
+      color: var(--grey-dim);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 3px 9px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .quick-btn:hover {
+      border-color: var(--orange);
+      color: var(--orange);
+      background: var(--orange-glow);
+    }
+
+    .quick-btn:active { transform: scale(0.97); }
+
+    /* ─── INPUT ROW ──────────────────────────────────────────────── */
+    .input-row {
+      padding: 10px 20px 14px;
+      display: flex;
+      align-items: center;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 2;
+    }
+
+    .input-prompt { flex-shrink: 0; font-size: 13.5px; white-space: nowrap; }
+    .input-prompt .p-user   { color: var(--green-term); }
+    .input-prompt .p-at     { color: var(--white-dim); }
+    .input-prompt .p-host   { color: var(--orange); }
+    .input-prompt .p-path   { color: var(--grey-warm); }
+    .input-prompt .p-dollar { color: var(--white-dim); }
+
+    .input-field {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      color: var(--white);
+      caret-color: var(--orange);
+      padding: 0 8px;
+    }
+
+    .input-field::placeholder { color: var(--grey-dim); font-style: italic; }
+
+    .send-btn {
+      background: none;
+      border: 1px solid var(--aubergine-light);
+      border-radius: 4px;
+      color: var(--grey-warm);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .send-btn:hover {
+      border-color: var(--orange);
+      color: var(--orange);
+      background: var(--orange-glow);
+    }
+
+    .send-btn:active { transform: scale(0.97); }
+
+    /* ─── RESPONSIVE ─────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .banner-ascii { font-size: 7.5px; }
+      .chat-log, .input-row, .quick-bar { padding-left: 12px; padding-right: 12px; }
+      .msg-line, .input-field, .input-prompt { font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+<div class="desktop">
+  <div class="window">
+
+    <!-- Title bar -->
+    <div class="titlebar">
+      <div class="window-controls">
+        <div class="wc wc-close"></div>
+        <div class="wc wc-min"></div>
+        <div class="wc wc-max"></div>
+      </div>
+      <div class="titlebar-title">azuha@hamza:~</div>
+      <div class="titlebar-status">
+        <div class="status-dot"></div>
+        <span>online</span>
+      </div>
+    </div>
+
+    <!-- Terminal -->
+    <div class="terminal">
+
+      <!-- Banner -->
+      <div class="banner">
+        <div class="banner-ascii">  ___
+ / _ \  ____  _  _  _  _  ___
+/ /_\ \|_  / | || || || |/ _ \
+|  _  | / /  | || || || |\__  |
+|_| |_|/___|  \___/ \___/ |___/</div>
+        <div class="banner-meta">
+          <span>model <b>azuha ·V1</b></span>
+          <span>method <b>LoRA</b></span>
+          <!-- <span>trained params <b>147,456 / 163M</b></span> -->
+          <span>built by <b>Muhammad Hamza Waheed</b></span>
+        </div>
+      </div>
+
+      <!-- Chat log -->
+      <div class="chat-log" id="chatLog"></div>
+
+      <!-- Quick commands -->
+      <div class="quick-bar">
+        <button class="quick-btn" onclick="sendQuick('Who are you?')">who are you</button>
+        <button class="quick-btn" onclick="sendQuick('What is your architecture?')">architecture</button>
+        <button class="quick-btn" onclick="sendQuick('Who is Hamza?')">about hamza</button>
+        <button class="quick-btn" onclick="sendQuick('What projects has Hamza worked on?')">projects</button>
+        <button class="quick-btn" onclick="sendQuick('What are Hamza\'s skills?')">skills</button>
+        <button class="quick-btn" onclick="sendQuick('What are Hamza\'s career goals?')">goals</button>
+        <button class="quick-btn" onclick="clearChat()">clear</button>
+      </div>
+
+      <!-- Input -->
+      <div class="input-row">
+        <div class="input-prompt">
+          <span class="p-user">hamza</span><span class="p-at">@</span><span class="p-host">azuha</span><span class="p-path">:~</span><span class="p-dollar">$&nbsp;</span>
+        </div>
+        <input
+          class="input-field"
+          id="inputField"
+          type="text"
+          placeholder="type a message and press Enter..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="send-btn" onclick="sendMessage()">Enter ↵</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // ─── CONFIG ───────────────────────────────────────────────────────
+  // Set DEMO_MODE = false and set API_URL to your backend endpoint
+  // once you have a Flask or FastAPI wrapper around finetune_generate.py.
+  // Expected POST body:  { "message": "user text" }
+  // Expected response:   { "response": "azuha reply" }
+  const API_URL   = '/api/chat';
+  const DEMO_MODE =false;
+
+  // ─── DEMO RESPONSES ───────────────────────────────────────────────
+  const DEMOS = {
+    'who are you':
+      "My name is Azuha. I am Hamza's personal AI assistant, built from scratch using PyTorch and fine-tuned with LoRA.",
+    'what is your architecture':
+      "I use a GPT-2 small architecture with 124 million parameters. I was fine-tuned using LoRA — rank 4 — applied to W_query and W_value attention matrices only, following Hu et al. 2021. Only 147,456 parameters were trained — 0.09% of my total.",
+    'who is hamza':
+      "Muhammad Hamza Waheed is a 19-year-old Electrical Engineering student at NUST CEME Islamabad, originally from Multan. He is a Freelance ML Engineer specialising in Machine Learning, Deep Learning, and Generative AI. He built me.",
+    "what projects has hamza worked on":
+      "Hamza has worked on ECG Arrhythmia Classification (96.5% accuracy with a 1D-CNN), an EEG Signal Processing Pipeline for Parkinson's research, an AI-Powered CV Maker on Azure using GPT-4o, a multi-agent RAG Personal Knowledge System with ChromaDB, and Azuha — me — a GPT-style LLM built completely from scratch.",
+    "what are hamza's skills":
+      "Hamza's skills cover AI and automation (LangChain, RAG, OpenAI APIs), ML/DL (PyTorch, TensorFlow, scikit-learn, CNNs), programming (Python, C++, MATLAB), DevOps (Docker, Azure, GitHub Actions), web backend (FastAPI, React, PostgreSQL), and embedded systems (Raspberry Pi, STM32, ESP32).",
+    "what are hamza's career goals":
+      "Hamza aims to become an AI Engineer, Embedded AI Engineer, or Machine Learning Researcher.",
+    'default':
+      "I am Azuha — running in demo mode. Connect me to the fine-tuned model backend to get real responses. Set DEMO_MODE = false and point API_URL at your running server."
+  };
+
+  // ─── ELEMENTS ─────────────────────────────────────────────────────
+  const chatLog    = document.getElementById('chatLog');
+  const inputField = document.getElementById('inputField');
+  let isWaiting = false;
+
+  // ─── ENTER KEY ────────────────────────────────────────────────────
+  inputField.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+
+  function sendQuick(text) {
+    inputField.value = text;
+    sendMessage();
+  }
+
+  // ─── SEND ─────────────────────────────────────────────────────────
+  async function sendMessage() {
+    const text = inputField.value.trim();
+    if (!text || isWaiting) return;
+    inputField.value = '';
+    isWaiting = true;
+
+    appendUserLine(text);
+    const tid = appendThinking();
+
+    let reply;
+    try {
+      if (DEMO_MODE) {
+        await sleep(500 + Math.random() * 700);
+        reply = getDemoReply(text);
+      } else {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        if (!res.ok) throw new Error(`server error ${res.status}`);
+        const json = await res.json();
+        reply = json.response || json.message || '(no response)';
+      }
+    } catch (err) {
+      removeEl(tid);
+      appendLine('msg-error', `<div class="msg-text">error: ${esc(err.message)}</div>`);
+      isWaiting = false;
+      return;
+    }
+
+    removeEl(tid);
+    appendAzuhaLine(reply);
+    isWaiting = false;
+    inputField.focus();
+  }
+
+  // ─── DOM BUILDERS ─────────────────────────────────────────────────
+  function appendUserLine(text) {
+    appendLine('msg-user',
+      `<div class="msg-prompt">
+        <span class="p-user">hamza</span><span class="p-at">@</span><span class="p-host">azuha</span><span class="p-path">:~</span><span class="p-dollar">$</span>
+       </div>
+       <div class="msg-text">${esc(text)}</div>`
+    );
+  }
+
+  function appendAzuhaLine(text) {
+    // remove cursor from previous azuha lines
+    chatLog.querySelectorAll('.cursor-block').forEach(c => c.remove());
+    appendLine('msg-azuha',
+      `<div class="msg-prompt">
+        <span class="p-name">azuha</span><span class="p-arrow">&nbsp;&gt;&nbsp;</span>
+       </div>
+       <div class="msg-text">${esc(text)}<span class="cursor-block"></span></div>`
+    );
+  }
+
+  function appendThinking() {
+    const id = 'th-' + Date.now();
+    appendLine('msg-thinking',
+      `<div class="msg-prompt">
+        <span style="color:var(--grey-dim);font-weight:700">azuha</span><span style="color:var(--grey-dim)">&nbsp;&gt;&nbsp;</span>
+       </div>
+       <div class="msg-text">thinking<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span></div>`,
+      id
+    );
+    return id;
+  }
+
+  function appendSystemLine(text) {
+    appendLine('msg-system', `<div class="msg-text">${text}</div>`);
+  }
+
+  function appendLine(cls, html, id) {
+    const el = document.createElement('div');
+    el.className = 'msg-line ' + cls;
+    if (id) el.id = id;
+    el.innerHTML = html;
+    chatLog.appendChild(el);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+
+  function removeEl(id) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  }
+
+  function esc(s) {
+    return s
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ─── CLEAR ────────────────────────────────────────────────────────
+  function clearChat() {
+    chatLog.innerHTML = '';
+    appendSystemLine('── session cleared ──────────────────────────────────');
+    inputField.focus();
+  }
+
+  // ─── DEMO LOOKUP ──────────────────────────────────────────────────
+  function getDemoReply(text) {
+    const k = text.toLowerCase().replace(/[?!.,]/g,'').trim();
+    for (const [key, val] of Object.entries(DEMOS)) {
+      if (key !== 'default' && k.includes(key)) return val;
+    }
+    return DEMOS['default'];
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ─── BOOT SEQUENCE ────────────────────────────────────────────────
+  window.addEventListener('load', () => {
+    inputField.focus();
+    const boot = [
+      [200,  'azuha v1.0........................'],
+      [550,  'loading pretrained weights...'],
+      [950,  'applying LoRA — 147,456 / 163,184,640 params active (0.09%)'],
+      [1250, 'ready.'],
+      [1300, '─────────────────────────────────────────────────────'],
+    ];
+    boot.forEach(([ms, txt]) => setTimeout(() => appendSystemLine(txt), ms));
+  });
+</script>
+</body>
+</html>
